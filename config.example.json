@@ -46,12 +46,20 @@
       "enabled": true,
       "group": 1,
       "kind": "regex",
-      "name": "Labelled identifier",
-      "pattern": "(?i)\\b(?:mx|gateway|server)[\\s_-]*(?:id|name)?\\s*[:=]\\s*([A-Za-z0-9][A-Za-z0-9._-]{1,63})",
+      "name": "Incident ID suffix",
+      "pattern": "(?i)incident\\s+ID\\s+is\\s+.+?/\\s*\\d+\\s*-\\s*(\\d+(?:\\.\\d+)*)",
+      "suffix": ""
+    },
+    {
+      "enabled": true,
+      "group": 1,
+      "kind": "regex",
+      "name": "MX ID is",
+      "pattern": "(?i)\\bMX\\s*ID\\s*(?:is|:)\\s*([A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)",
       "suffix": ""
     }
   ],
-  "schema_version": 1,
+  "schema_version": 2,
   "start_minimized": true,
   "start_with_windows": false,
   "tooltip_follow_cursor": true,

@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Callable
 
-from ..config import ExtractionRule, Settings
+from ..config import ExtractionRule, Settings, default_rules
 from ..extractor import explain
 from ..service import Outcome
 from ..urlutil import normalize_domain_pattern
@@ -154,7 +154,7 @@ class SettingsWindow(tk.Toplevel):
     def _tab_extraction(self, nb: ttk.Notebook) -> None:
         f = ttk.Frame(nb, padding=8)
         nb.add(f, text="Extraction")
-        ttk.Label(f, text="Rules are tried top to bottom; the first valid result wins.").pack(anchor="w")
+        ttk.Label(f, text="Built-in rules cover the standard block page. Rules are tried top to bottom; the first valid result wins.").pack(anchor="w")
         cols = ("name", "kind", "pattern", "suffix", "group", "on")
         self.tree = ttk.Treeview(f, columns=cols, show="headings", height=5, selectmode="browse")
         for c, w in zip(cols, (150, 70, 300, 90, 50, 40)):
@@ -166,6 +166,7 @@ class SettingsWindow(tk.Toplevel):
         bar.pack(anchor="w")
         for text, cmd in (("Add", self._add_rule), ("Edit", self._edit_rule), ("Remove", self._del_rule), ("Up", lambda: self._move_rule(-1)), ("Down", lambda: self._move_rule(1))):
             ttk.Button(bar, text=text, command=cmd, width=8).pack(side="left", padx=2)
+        ttk.Button(bar, text="Restore built-in rules", command=self._restore_rules).pack(side="left", padx=10)
         r = ttk.Frame(f)
         r.pack(fill="x", pady=6)
         ttk.Label(r, text="MX value must fully match").pack(side="left")
@@ -371,6 +372,11 @@ class SettingsWindow(tk.Toplevel):
         self.rules[i], self.rules[i + delta] = self.rules[i + delta], self.rules[i]
         self._refresh_rules()
         self.tree.selection_set(str(i + delta))
+
+    def _restore_rules(self) -> None:
+        if messagebox.askyesno("Rules", "Replace the current rule list with the built-in rules?", parent=self):
+            self.rules = copy.deepcopy(default_rules())
+            self._refresh_rules()
 
     def _run_rules(self) -> None:
         headers = {}

@@ -2,7 +2,7 @@
 
 A small Windows tray application that tells you **which Imperva SecureSphere MX gateway handled a URL**. Hover over a link (or select it and press a hotkey) in Chrome, Teams, Excel or most other apps; the tool sends one tightly restricted probe request to the URL's host, reads the WAF's HTML response, extracts the MX identifier with rules you configure, and shows it in a small floating tooltip.
 
-Nothing organisation-specific is built in. The domain allowlist starts **empty** and the extraction rule is a generic placeholder; you supply both in the Settings window.
+Nothing organisation-specific is built in. The domain allowlist starts **empty**, so you add your own domains in the Settings window. Extraction rules for the standard SecureSphere block-page wording (`The incident ID is … / <number> - <MX id>` and `MX ID is <id>`) are built in, so no regex is needed to get started.
 
 ## How it works
 
@@ -50,9 +50,9 @@ Everything is in **Tray icon → Settings**. Saved to `%APPDATA%\WAFMXDetector\c
 
 The Settings window also has a **Test probe** box that runs a detection with the unsaved settings.
 
-### Tuning the extraction rules
+### Extraction rules
 
-Open the Extraction tab, paste a *sanitised or synthetic* version of your block page into the tester, and iterate until a rule reports `[HIT]`. The shipped rule only recognises text like `Gateway: <id>` and is an example, not a statement about any real product page. Please do not paste real internal responses into issues or commits.
+The built-in rules read the MX id from the standard block-page sentence (the part after the dash in `The incident ID is N/A / <number> - <MX id>.`) or from an explicit `MX ID is <id>`. If your gateways word the page differently, open the Extraction tab, paste a *sanitised or synthetic* copy of the page into the tester, and add a rule until it reports `[HIT]`. **Restore built-in rules** brings the defaults back. Please do not paste real internal responses into issues or commits.
 
 ## What works where (read this)
 

@@ -16,7 +16,10 @@ from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# Pattern of the generic placeholder rule shipped in schema 1; used only to upgrade untouched configs.
+_V1_PLACEHOLDER_PATTERN = r"(?i)\b(?:mx|gateway|server)[\s_-]*(?:id|name)?\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._-]{1,63})"
 
 
 def app_dir() -> Path:
@@ -51,13 +54,27 @@ class ExtractionRule:
     VALID_KINDS = ("regex", "between", "meta", "header")
 
 
+_MX_TOKEN = r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?"
+
+
 def default_rules() -> list[ExtractionRule]:
-    # Generic, non-sensitive examples. The user is expected to tune these.
+    """Built-in rules for the SecureSphere block page, so no regex is needed out of the box.
+
+    1. "The incident ID is <support id or N/A> / <digits> - <MX id>."  -> MX id is the part after the dash.
+    2. "... MX ID is <id>" / "MX ID: <id>"                               -> MX id is the stated value.
+    Only the wording patterns are shipped, never real response bodies.
+    """
     return [
         ExtractionRule(
-            name="Labelled identifier",
+            name="Incident ID suffix",
             kind="regex",
-            pattern=r"(?i)\b(?:mx|gateway|server)[\s_-]*(?:id|name)?\s*[:=]\s*([A-Za-z0-9][A-Za-z0-9._-]{1,63})",
+            pattern=r"(?i)incident\s+ID\s+is\s+.+?/\s*\d+\s*-\s*(\d+(?:\.\d+)*)",
+            group=1,
+        ),
+        ExtractionRule(
+            name="MX ID is",
+            kind="regex",
+            pattern=r"(?i)\bMX\s*ID\s*(?:is|:)\s*(" + _MX_TOKEN + ")",
             group=1,
         ),
     ]
@@ -197,6 +214,12 @@ class Settings:
                 clean[k] = rules
             else:
                 clean[k] = v
+        # Upgrade configs that still hold the untouched v1 placeholder rule to the built-in rules.
+        if int(clean.get("schema_version", 1) or 1) < SCHEMA_VERSION:
+            rules = clean.get("rules")
+            if isinstance(rules, list) and len(rules) == 1 and rules[0].pattern == _V1_PLACEHOLDER_PATTERN:
+                clean["rules"] = default_rules()
+            clean["schema_version"] = SCHEMA_VERSION
         return cls(**clean)
 
 
