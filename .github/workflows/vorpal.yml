@@ -1,0 +1,243 @@
+# Vorpal - secure-coding checks on every change
+# Vorpal is Checkmarx's secure-coding scanner. It analyses one source file at a time and
+# supports C#, Go, Java, JavaScript and Python.
+# Each run does two things:
+#   1. Report: every tracked source file is scanned. The results are published as a job summary,
+#      as alerts in Security > Code scanning, and as a downloadable artifact. The report does
+#      not block the run.
+#   2. Gate (pull requests only): the source files changed by the pull request are checked
+#      again, annotated on the affected lines, and the check fails while a finding is open.
+# Source lines are removed from all reports, because a finding such as "Hardcoded Tokens"
+# would otherwise quote the secret itself.
+name: Vorpal code scan
+
+# Triggers: pushes to the default branch, every pull request, and manual runs from the Actions tab.
+# No path filter is set, so a change to any file starts the workflow.
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# Least-privilege permissions for the workflow token.
+permissions:
+  contents: read           # read the repository; no write access to code
+  checks: write            # publish check annotations on pull requests
+  pull-requests: write     # required by the pull request reporter
+  security-events: write   # upload SARIF results to Code scanning
+
+# Shared settings, defined once and used by the steps below.
+env:
+  # Pinned Vorpal CLI version, identified by image digest so the exact same build runs every time.
+  # It matches the version used by the reviewdog action in the final step.
+  VORPAL_VERSION: "1.1.4"
+  VORPAL_IMAGE: checkmarx/vorpal-cli:1.1.4@sha256:19c0e856c9c78cf844a25690000510eb23ecbc22f0a33be7b10c052d96872cc7
+  # File types in scope: every language Vorpal supports.
+  # Applies to both the full scan and the pull request gate.
+  VORPAL_PATHSPEC: "*.cs *.go *.java *.js *.jsx *.py"
+  # Excluded paths: virtual environments and build output, which are not maintained in this repository.
+  VORPAL_IGNORE_REGEX: '^(\.venv|venv|build|dist)/|/node_modules/'
+
+jobs:
+  vorpal:
+    runs-on: ubuntu-24.04
+    steps:
+      # Step 1 - Check out the repository.
+      # Full history is fetched so a pull request can be compared against its base branch.
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false   # do not keep the access token in the local git configuration
+
+      # Step 2 - Build the list of source files to scan.
+      # Result: vorpal-files.txt, one tracked file per line, after exclusions are applied.
+      - name: List the source files to scan
+        run: |
+          # Raw per-file results stay outside the workspace, because they quote source lines
+          echo "RAW_DIR=$RUNNER_TEMP/vorpal-raw" >> "$GITHUB_ENV"
+          set -f   # keep the *.ext patterns for git instead of letting the shell expand them
+          git ls-files -- $VORPAL_PATHSPEC | { grep -Ev "$VORPAL_IGNORE_REGEX" || true; } > vorpal-files.txt
+          echo "Source files to scan: $(wc -l < vorpal-files.txt)"
+
+      # Step 3 - Pull requests only: identify the source files changed by this pull request.
+      # These are the files passed to the gate in the final step.
+      - name: List changed source files (pull requests)
+        id: changed
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -f
+          FILES=$(git diff --name-only --diff-filter=ACMR "origin/${BASE_REF}...HEAD" -- $VORPAL_PATHSPEC \
+                  | paste -sd, -)
+          echo "Changed source files: ${FILES:-none}"
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      # Step 4 - Scan every file in the list.
+      # The Vorpal CLI accepts a single file per invocation, so the container loops over the
+      # list and writes one result file per source file.
+      - name: Scan every source file with Vorpal
+        id: scan
+        run: |
+          mkdir -p "$RAW_DIR" vorpal-results
+          if [ -s vorpal-files.txt ]; then
+            docker run --rm \
+              -v "$PWD:/src:ro" \
+              -v "$PWD/vorpal-files.txt:/files.txt:ro" \
+              -v "$RAW_DIR:/out" \
+              -w /src \
+              --entrypoint sh \
+              "$VORPAL_IMAGE" -c '
+                i=0
+                while IFS= read -r f; do
+                  i=$((i+1))
+                  /app/bin/vorpal -s "$f" -r "/out/$i.json" > /dev/null 2>&1
+                  # Vorpal always exits 0, and writes "null" for a clean file,
+                  # so a missing or empty result file is the only sign of a failed scan
+                  [ -s "/out/$i.json" ] || echo "$f" >> /out/failed.txt
+                done < /files.txt
+              '
+          fi
+          # Record how many files were scanned and how many could not be scanned
+          FAILED=0
+          [ -f "$RAW_DIR/failed.txt" ] && FAILED=$(wc -l < "$RAW_DIR/failed.txt")
+          echo "scanned=$(wc -l < vorpal-files.txt)" >> "$GITHUB_OUTPUT"
+          echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+
+      # Step 5 - Build the reports from the raw results: findings.json, vorpal.sarif and summary.md.
+      - name: Build the reports (JSON, SARIF, summary)
+        if: always() && steps.scan.outcome == 'success'
+        env:
+          SCANNED: ${{ steps.scan.outputs.scanned }}
+          FAILED: ${{ steps.scan.outputs.failed }}
+        run: |
+          shopt -s nullglob
+          raw=("$RAW_DIR"/*.json)
+
+          # findings.json: all findings from all files in one list, with the source lines removed.
+          # Vorpal writes "null" with no newline for a clean file, and jq joins its input files
+          # into one stream, so a newline is added after each file.
+          if [ ${#raw[@]} -eq 0 ]; then
+            echo '[]' > vorpal-results/findings.json
+          else
+            for f in "${raw[@]}"; do cat "$f"; echo; done \
+              | jq -s 'map(. // []) | add // [] | map(del(.content))' > vorpal-results/findings.json
+          fi
+
+          # vorpal.sarif: the same findings in SARIF, the format Code scanning ingests.
+          # The Vorpal CLI does not produce SARIF, so it is generated here.
+          # Severity mapping: Critical and High = error, Medium = warning, Low = note.
+          jq --arg ver "$VORPAL_VERSION" '
+            def sev: {"Critical":"9.5","High":"8.0","Medium":"5.5","Low":"3.0"}[.] // "5.0";
+            def lvl: if . == "Critical" or . == "High" then "error"
+                     elif . == "Medium" then "warning" else "note" end;
+            {
+              "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+              version: "2.1.0",
+              runs: [{
+                tool: { driver: {
+                  name: "Vorpal",
+                  version: $ver,
+                  informationUri: "https://github.com/Checkmarx/vorpal-reviewdog-github-action",
+                  rules: (group_by(.ruleId) | map(.[0] | {
+                    id: "Vorpal-\(.ruleId)",
+                    shortDescription: { text: .rule },
+                    fullDescription: { text: .description },
+                    help: { text: .remediationAdvice },
+                    defaultConfiguration: { level: (.severity | lvl) },
+                    properties: { tags: ["security", "vorpal"], "security-severity": (.severity | sev) }
+                  }))
+                }},
+                results: map({
+                  ruleId: "Vorpal-\(.ruleId)",
+                  level: (.severity | lvl),
+                  message: { text: "\(.rule): \(.remediationAdvice)" },
+                  locations: [{ physicalLocation: {
+                    artifactLocation: { uri: .file },
+                    region: { startLine: (.line | tonumber) }
+                  }}]
+                })
+              }]
+            }' vorpal-results/findings.json > vorpal-results/vorpal.sarif
+
+          # summary.md: the job summary (also included in the artifact).
+          # It lists the number of files scanned per type, a count per severity, and one row per finding.
+          by_ext=$(sed -E 's/.*\.([^.]+)$/.\1/' vorpal-files.txt | sort | uniq -c \
+                   | awk '{printf "%s%s %s", sep, $2, $1; sep=", "}')
+          {
+            echo "## Vorpal code scan"
+            echo ""
+            echo "Scanned **${SCANNED}** source files (${by_ext:-none}). Vorpal supports C#, Go, Java, JavaScript and Python."
+            if [ "$FAILED" != "0" ]; then
+              echo ""
+              echo "**${FAILED} file(s) could not be scanned, so this report is incomplete.**"
+            fi
+            echo ""
+            echo "| Severity | Findings |"
+            echo "|---|---|"
+            for s in Critical High Medium Low; do
+              echo "| $s | $(jq --arg s "$s" '[.[] | select(.severity == $s)] | length' vorpal-results/findings.json) |"
+            done
+            echo ""
+            echo "### Findings"
+            echo ""
+            echo "| Rule | Severity | File | Line |"
+            echo "|---|---|---|---|"
+            jq -r 'sort_by(.file, (.line | tonumber)) | .[]
+                   | "| \(.rule) (Vorpal-\(.ruleId)) | \(.severity) | `\(.file)` | \(.line) |"' \
+              vorpal-results/findings.json
+            echo ""
+            echo "_Source lines are not included. The full report is in the **vorpal-reports** artifact._"
+          } > vorpal-results/summary.md
+          cat vorpal-results/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Step 6 - Publish the findings to Security > Code scanning.
+      # The category keeps Vorpal alerts separate from other code scanning tools.
+      # Alerts dismissed in the Security tab remain closed on later runs.
+      - name: Upload SARIF to GitHub Code scanning
+        if: always() && hashFiles('vorpal-results/vorpal.sarif') != ''
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: vorpal-results/vorpal.sarif
+          category: vorpal
+
+      # Step 7 - Retain the reports as a downloadable artifact (vorpal-reports, 30 days).
+      # The step fails if the files are missing, so a gap in reporting is never silent.
+      - name: Keep the full reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: vorpal-reports
+          path: |
+            vorpal-results/findings.json
+            vorpal-results/vorpal.sarif
+            vorpal-results/summary.md
+          retention-days: 30
+          if-no-files-found: error
+
+      # Step 8 - Completeness check.
+      # If any file could not be scanned, the run fails and names the files, so an
+      # incomplete scan is never reported as a clean result.
+      - name: Fail if a file could not be scanned
+        if: always() && steps.scan.outputs.failed != '' && steps.scan.outputs.failed != '0'
+        run: |
+          echo "::error::Vorpal could not scan these files, so the report is incomplete: $(head -5 "$RAW_DIR/failed.txt" | paste -sd, -)"
+          exit 1
+
+      # Step 9 - Pull request gate.
+      # Runs on pull requests only, on the source files changed by the pull request (Step 3).
+      # Findings are annotated on the affected lines (pull request > Checks and Files changed),
+      # and the check fails while any finding is open. On pushes and manual runs this step is
+      # skipped, so those runs report findings without failing.
+      - name: Vorpal with reviewdog
+        if: always() && github.event_name == 'pull_request' && steps.changed.outputs.files != ''
+        uses: checkmarx/vorpal-reviewdog-github-action@8cc292f337a2f1dea581b4f4bd73852e7becb50d # v1.2.0
+        with:
+          source_path: ${{ steps.changed.outputs.files }}
+          folders_to_ignore: .venv,venv,build,dist   # virtual environments and build output, not maintained here
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          reporter: github-pr-check    # annotations on the lines, plus the Checks tab
+          filter_mode: file            # every finding in the changed files (use "added" for new lines only)
+          level: error
+          fail_on_error: true          # the check fails while any finding is open
