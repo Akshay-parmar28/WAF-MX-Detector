@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waf-mx-detector"
+version = "1.0.0"
+description = "Windows tray tool that shows which WAF gateway (MX) handled a URL"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+  "urllib3>=2.2,<3",
+  "truststore>=0.9",
+  "Pillow>=10.0",
+  "pystray>=0.19.5",
+  "uiautomation>=2.0.20; sys_platform == 'win32'",
+  "comtypes>=1.4.4; sys_platform == 'win32'",
+]
+
+[project.scripts]
+wafmx = "wafmx.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8
+trustme>=1.1
+pyflakes>=3.2
+pyinstaller>=6.6

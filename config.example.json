@@ -1,0 +1,65 @@
+{
+  "allow_http": false,
+  "allow_private_ips": false,
+  "allowed_domains": [
+    "example.com",
+    "*.example.net"
+  ],
+  "allowed_ports": [
+    80,
+    443
+  ],
+  "ca_bundle_path": "",
+  "cache_enabled": true,
+  "cache_ttl_seconds": 300,
+  "clipboard_blocklist": [
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "windowsterminal.exe",
+    "conhost.exe",
+    "wt.exe",
+    "putty.exe",
+    "mintty.exe"
+  ],
+  "connect_timeout": 5.0,
+  "extra_headers": {},
+  "follow_redirects": true,
+  "history_enabled": false,
+  "history_max_entries": 200,
+  "hotkey": "ctrl+alt+m",
+  "hotkey_enabled": true,
+  "hover_dwell_ms": 700,
+  "hover_enabled": false,
+  "hover_modifier": "",
+  "log_level": "INFO",
+  "match_status_codes": [],
+  "max_redirects": 3,
+  "max_response_bytes": 262144,
+  "mx_value_pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+  "probe_method": "GET",
+  "probe_path": "/__waf_probe__",
+  "read_timeout": 8.0,
+  "restore_clipboard": true,
+  "rules": [
+    {
+      "enabled": true,
+      "group": 1,
+      "kind": "regex",
+      "name": "Labelled identifier",
+      "pattern": "(?i)\\b(?:mx|gateway|server)[\\s_-]*(?:id|name)?\\s*[:=]\\s*([A-Za-z0-9][A-Za-z0-9._-]{1,63})",
+      "suffix": ""
+    }
+  ],
+  "schema_version": 1,
+  "start_minimized": true,
+  "start_with_windows": false,
+  "tooltip_follow_cursor": true,
+  "tooltip_font_size": 10,
+  "tooltip_seconds": 6.0,
+  "total_timeout": 12.0,
+  "use_clipboard_fallback": true,
+  "use_system_trust_store": true,
+  "user_agent": "WAFMXDetector/1.0",
+  "verify_tls": true
+}
