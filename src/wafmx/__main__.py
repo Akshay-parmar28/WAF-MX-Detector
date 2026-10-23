@@ -9,7 +9,22 @@ from pathlib import Path
 from . import APP_NAME, __version__
 
 
+def _attach_parent_console() -> None:
+    """The windowed exe has no stdout; when started from cmd/PowerShell, print to that console."""
+    if sys.platform != "win32" or sys.stdout is not None:
+        return
+    import ctypes
+
+    if ctypes.windll.kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8")
+        sys.stderr = sys.stdout
+
+
 def main(argv: list[str] | None = None) -> int:
+    # Only console-style invocations attach to the parent console; the tray app must not be tied to it
+    # (closing that cmd window would otherwise kill the tray app).
+    if any(a in ("--detect", "--version", "-h", "--help") for a in (argv if argv is not None else sys.argv[1:])):
+        _attach_parent_console()
     ap = argparse.ArgumentParser(prog="wafmx", description=f"{APP_NAME} {__version__}")
     ap.add_argument("--minimized", action="store_true", help="start in the tray without opening settings")
     ap.add_argument("--config", type=Path, help="use this config file instead of the default")

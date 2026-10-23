@@ -23,7 +23,15 @@ pytest
 python -m wafmx            # opens Settings on first run
 ```
 
-Command line: `python -m wafmx --detect "https://host.example.com/anything"` runs one detection with the saved settings and exits (`0` = MX found, `2` otherwise). `--config path.json` uses another config file.
+Command prompt (built exe): run the tray app with `WAFMXDetector.exe` (add `--minimized` to skip the Settings window), or check one URL and read the result in the console:
+
+```bat
+WAFMXDetector-cli.exe --detect "https://host.example.com/anything"
+echo %ERRORLEVEL%
+```
+Output is `mx_found: <id>` (exit 0), or `no_mx` / `failed` / `not_allowed` / `no_url` with a reason (exit 2). It uses the same saved settings as the tray app. (`WAFMXDetector.exe --detect` works too, but as a windowed program cmd does not wait for it; use `start /wait` or the CLI exe.)
+
+From source: `python -m wafmx --detect "https://host.example.com/anything"` runs one detection with the saved settings and exits (`0` = MX found, `2` otherwise). `--config path.json` uses another config file.
 
 ## Build the standalone .exe
 
@@ -32,7 +40,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build.ps1            # folder
 powershell -ExecutionPolicy Bypass -File packaging\build.ps1 -OneFile   # single exe
 ```
 
-Output is `dist\WAFMXDetector\WAFMXDetector.exe`; zip that folder and hand it out. No Python is needed on the target machine. The GitHub Actions workflow `build-windows-exe` does the same on a Windows runner and publishes a zip plus SHA-256.
+Output is `dist\WAFMXDetector\` containing `WAFMXDetector.exe` (the tray app) and `WAFMXDetector-cli.exe` (console tool); zip that folder and hand it out. No Python is needed on the target machine. The GitHub Actions workflow `build-windows-exe` does the same on a Windows runner and publishes a zip plus SHA-256.
 
 Notes: the folder build starts faster and triggers fewer antivirus false positives than `-OneFile`. Unsigned PyInstaller binaries can still be flagged; sign the exe with your organisation's code-signing certificate for managed fleets.
 
